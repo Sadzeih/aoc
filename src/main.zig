@@ -80,12 +80,6 @@ test "Day1.produceSimilarityScore" {
     try std.testing.expectEqual(31, day1.produceSimilarityScore());
 }
 
-const Slope = enum {
-    Increasing,
-    Decreasing,
-    Level,
-};
-
 const Report = struct {
     allocator: std.mem.Allocator,
     levels: std.ArrayList(u32),
@@ -109,6 +103,16 @@ const Report = struct {
         try self.levels.append(level);
     }
 
+    fn findFirstDifference(comptime T: type, a: []const T, b: []const T) bool {
+        if (a.len < b.len) return false;
+        for (a, b) |ai, bi| {
+            if (ai != bi) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     fn isSliceSafe(self: Report, slice: []u32) !bool {
         const asc = try self.allocator.alloc(u32, slice.len);
         defer self.allocator.free(asc);
@@ -118,42 +122,45 @@ const Report = struct {
         defer self.allocator.free(desc);
         @memcpy(desc, slice);
         std.mem.sort(u32, desc, {}, std.sort.desc(u32));
-        std.debug.print("eq to asc? {}", .{std.mem.eql(u32, slice, asc)});
-        std.debug.print("eq to desc? {}", .{std.mem.eql(u32, slice, desc)});
-        const inc_or_dec = std.mem.eql(u32, slice, asc) or std.mem.eql(u32, slice, desc);
+        const is_inc: bool = Report.findFirstDifference(u32, slice, asc);
+        const is_desc: bool = Report.findFirstDifference(u32, slice, desc);
+        const inc_or_dec: bool = is_inc or is_desc;
 
         var i: usize = 0;
+        var good_diff: bool = true;
         while (i < slice.len) : (i += 1) {
             if (i + 1 >= slice.len) break;
             const diff: i32 = @as(i32, @intCast(slice[i])) - @as(i32, @intCast(slice[i + 1]));
-            std.debug.print("diff: {d}\n", .{diff});
             if (@abs(diff) < 1 or @abs(diff) > 3) {
-                return false;
+                good_diff = false;
+                break;
             }
         }
-        std.debug.print("inc_or_dec: {}\n", .{inc_or_dec});
-        return inc_or_dec;
+        return inc_or_dec and good_diff;
     }
 
     fn isSafe(self: *const Report) !bool {
-        std.debug.print("{d}\n", .{self.levels.items});
         // var safe: bool = true;
-        var i: usize = 0;
-        while (i < self.levels.items.len) : ({
-            i += 1;
-        }) {
-            if (i + 1 >= self.levels.items.len) {
-                std.debug.print("{s}", .{"breaking cause of i\n"});
-                break;
-            }
-            // self.isSliceSafe()
+        var safe: bool = try self.isSliceSafe(self.levels.items);
+        if (safe) {
+            return true;
         }
-        return try self.isSliceSafe(self.levels.items);
+
+        var i: usize = 0;
+        const test_slice = try self.allocator.alloc(u32, self.levels.items.len);
+        defer self.allocator.free(test_slice);
+        while (i < self.levels.items.len and safe != true) : (i += 1) {
+            @memcpy(test_slice, self.levels.items);
+            std.mem.copyForwards(u32, test_slice[i..], test_slice[i + 1 ..]);
+            safe = try self.isSliceSafe(test_slice[0 .. test_slice.len - 1]);
+        }
+
+        return safe;
     }
 };
 
 test "Report.isSafe" {
-    const reports = [7][5]u32{
+    const reports = [15][5]u32{
         [_]u32{ 7, 6, 4, 2, 1 },
         [_]u32{ 1, 2, 7, 8, 9 },
         [_]u32{ 9, 7, 6, 2, 1 },
@@ -161,9 +168,25 @@ test "Report.isSafe" {
         [_]u32{ 8, 6, 4, 4, 1 },
         [_]u32{ 1, 3, 6, 7, 9 },
         [_]u32{ 27, 25, 28, 29, 30 },
+        [_]u32{ 65, 68, 71, 72, 71 },
+        [_]u32{ 19, 17, 21, 24, 26 },
+        [_]u32{ 17, 21, 24, 26, 50 },
+        [_]u32{ 17, 21, 24, 26, 23 },
+        [_]u32{ 20, 21, 24, 26, 26 },
+        [_]u32{ 20, 27, 23, 25, 26 },
+        [_]u32{ 20, 21, 24, 28, 26 },
+        [_]u32{ 15, 21, 24, 27, 29 },
     };
 
     const expecteds = [_]bool{
+        true,
+        false,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
         true,
         false,
         false,
@@ -178,7 +201,6 @@ test "Report.isSafe" {
         defer report.deinit();
         try report.appendLevels(levels[0..]);
         const is_safe = try report.isSafe();
-        std.debug.print("{}\n", .{is_safe});
         try std.testing.expectEqual(expected, is_safe);
     }
 }
@@ -216,11 +238,9 @@ const Day2 = struct {
         var safe_reports: u32 = 0;
         for (self.reports.items) |report| {
             if (try report.isSafe()) {
-                std.debug.print("{}\n", .{true});
                 safe_reports += 1;
                 continue;
             }
-            std.debug.print("{}\n", .{false});
         }
         return safe_reports;
     }
@@ -248,6 +268,139 @@ test "Day2.countSafeReports" {
     try std.testing.expectEqual(4, day2.countSafeReports());
 }
 
+const Day3 = struct {
+    const instruction_start = "mul(";
+    const delimiter = ",";
+    const end = ")";
+
+    const do_token = "do()";
+    const dont_token = "don't()";
+
+    do: bool = true,
+    allocator: std.mem.Allocator,
+    mults: std.ArrayList([2]u16),
+
+    fn init(allocator: std.mem.Allocator) Day3 {
+        return .{
+            .allocator = allocator,
+            .mults = std.ArrayList([2]u16).init(allocator),
+        };
+    }
+
+    fn deinit(self: *Day3) void {
+        self.mults.deinit();
+    }
+
+    fn findToken(comptime T: type, haystack: []const T, token: []const T) ?usize {
+        var i: usize = 0;
+
+        while (i < haystack.len and i + token.len <= haystack.len) : (i += 1) {
+            if (std.mem.eql(u8, haystack[i .. i + token.len], token)) return i + token.len;
+        }
+        return null;
+    }
+
+    fn parseLine(self: *Day3, line: []const u8) !void {
+        // std.debug.print("line size: {d}\n", .{line.len});
+        const i: ?usize = findToken(u8, line, Day3.instruction_start) orelse return;
+        const do_idx: ?usize = findToken(u8, line, Day3.do_token);
+        const dont_idx: ?usize = findToken(u8, line, Day3.dont_token);
+
+        var indexes = std.ArrayList(usize).init(self.allocator);
+        defer indexes.deinit();
+
+        try indexes.append(i.?);
+        if (do_idx != null) {
+            try indexes.append(do_idx.?);
+        }
+        if (dont_idx != null) {
+            try indexes.append(dont_idx.?);
+        }
+        std.mem.sort(usize, indexes.items, {}, std.sort.asc(usize));
+        for (indexes.items) |idx| {
+            if (idx == i) {
+                std.debug.print("{d} {s}\n", .{ idx, "idx == i" });
+                break;
+            }
+            if (idx == do_idx) {
+                std.debug.print("{d} {s}\n", .{ idx, "idx == do" });
+                self.do = true;
+            }
+            if (idx == dont_idx) {
+                std.debug.print("{d} {s}\n", .{ idx, "idx == dont" });
+                self.do = false;
+            }
+        }
+        std.debug.print("{}\n", .{self.do});
+
+        // std.debug.print("first idx: {d}\n", .{i.?});
+        const first_number_idx: usize = i.?;
+        const end_idx = i.? + (findToken(u8, line[first_number_idx..], Day3.end) orelse return);
+
+        // std.debug.print("inside instruction: {s}\n", .{line[first_number_idx .. end_idx - 1]});
+
+        var it = std.mem.tokenizeAny(u8, line[first_number_idx .. end_idx - 1], ",");
+
+        var mults = [2]u16{ 0, 0 };
+        var j: usize = 0;
+        while (it.next()) |number| : (j += 1) {
+            mults[j] = std.fmt.parseInt(u16, number, 10) catch {
+                return try self.parseLine(line[i.?..]);
+            };
+        }
+
+        if (self.do) {
+            std.debug.print("mul({d},{d})\n", .{ mults[0], mults[1] });
+            try self.mults.append(mults);
+        }
+
+        try self.parseLine(line[i.?..]);
+    }
+
+    fn result(self: *Day3) u64 {
+        var total: u64 = 0;
+        for (self.mults.items, 0..) |mult, i| {
+            std.debug.print("{d} mul({d},{d})\n", .{ i, mult[0], mult[1] });
+            total += @as(u64, @intCast(mult[0])) * @as(u64, @intCast(mult[1]));
+            // std.debug.print("total: {}\n", .{total});
+        }
+        return total;
+    }
+};
+
+test "Day3.findToken" {
+    try std.testing.expectEqual(5, Day3.findToken(u8, "xmul(2,4)%&mul[3,7]!@^do_not_mul(5,5)+mul(32,64]then(mul(11,8)mul(8,5))", Day3.instruction_start));
+    try std.testing.expectEqual(24, Day3.findToken(u8, "%&mul[3,7]!@^do_not_mul(5,5)+mul(32,64]then(mul(11,8)mul(8,5))", Day3.instruction_start));
+}
+
+test "Day3.parseLine" {
+    var d3: Day3 = Day3.init(std.testing.allocator);
+    defer d3.deinit();
+
+    try d3.parseLine("xmul(2,4)%&mul[3,7]!@^do_not_mul(5,5)+mul(32,64]then(mul(111,842)mul(8,5))");
+
+    try std.testing.expectEqual([2]u16{ 2, 4 }, d3.mults.items[0]);
+    try std.testing.expectEqual([2]u16{ 5, 5 }, d3.mults.items[1]);
+    try std.testing.expectEqual([2]u16{ 111, 842 }, d3.mults.items[2]);
+    try std.testing.expectEqual([2]u16{ 8, 5 }, d3.mults.items[3]);
+}
+
+test "Day3.result 1" {
+    var d3: Day3 = Day3.init(std.testing.allocator);
+    defer d3.deinit();
+
+    try d3.parseLine("xmul(2,4)%&mul[3,7]!@^do_not_mul(5,5)+mul(32,64]then(mul(11,8)mul(8,5))");
+    try std.testing.expectEqual(161, d3.result());
+}
+
+test "Day3.result 2" {
+    var d3: Day3 = Day3.init(std.testing.allocator);
+    defer d3.deinit();
+
+    try d3.parseLine("xmul(2,4)&mul[3,7]!^don't()_mul(5,5)+mul(32,64](mul(11,8)undo()?mul(8,5))");
+    try std.testing.expectEqual(48, d3.result());
+}
+
 pub fn main() !void {
     var args = std.process.args();
 
@@ -269,10 +422,10 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var day2 = Day2.init(arena.allocator());
-    defer day2.deinit();
+    var day3 = Day3.init(arena.allocator());
+    defer day3.deinit();
 
-    var buffer: [100]u8 = undefined;
+    var buffer: [10000]u8 = undefined;
 
     i = 0;
     while (true) : (i += 1) {
@@ -281,10 +434,10 @@ pub fn main() !void {
             else => return err,
         };
 
-        try day2.parseLine(line);
+        try day3.parseLine(line);
     }
 
-    const safe_report_count = try day2.countSafeReports();
+    const res = day3.result();
 
-    std.debug.print("safe report count: {}\n", .{safe_report_count});
+    std.debug.print("res: {}\n", .{res});
 }
