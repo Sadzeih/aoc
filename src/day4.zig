@@ -1,9 +1,8 @@
 const std = @import("std");
-const findToken = @import("token.zig").findToken;
 
 pub const Day4 = struct {
     const token = "XMAS";
-    const reversedToken = "SAMX";
+    const token_part2 = "MAS";
 
     const errors = error{
         OutOfBounds,
@@ -27,95 +26,72 @@ pub const Day4 = struct {
         try self.matrix.append(line);
     }
 
-    fn findOccurences(occurences: u16, haystack: []const u8, needle: []const u8) u16 {
-        const found: ?usize = findToken(u8, haystack, needle);
-        if (found != null) {
-            // std.debug.print("found at: {d}\n", .{found.?});
-            return 1 + findOccurences(occurences, haystack[found.?..], needle);
+    fn findInDirection(comptime T: type, matrix: [][]const T, needle: []const T, y_start: usize, x_start: usize, y_offset: isize, x_offset: isize) bool {
+        var x: isize = @intCast(x_start);
+        var y: isize = @intCast(y_start);
+        var i: usize = 0;
+
+        while (i < needle.len) {
+            if (y < 0 or x < 0 or y >= matrix.len or x >= matrix[@intCast(y)].len) return false;
+            if (matrix[@intCast(y)][@intCast(x)] != needle[@intCast(i)]) return false;
+
+            // std.debug.print("{c}", .{matrix[@intCast(y)][@intCast(x)]});
+            i += 1;
+            x += x_offset;
+            y += y_offset;
         }
-        return occurences;
+        // std.debug.print("{s}", .{"\n"});
+        return true;
     }
 
-    fn makeDiagonal(allocator: std.mem.Allocator, comptime T: type, matrix: [][]const T, x: usize, y: usize, offset: isize) ![]const T {
-        var diagonal = std.ArrayList(u8).init(allocator);
-        defer diagonal.deinit();
+    pub fn result(self: *Day4) !struct { usize, usize } {
+        var total: usize = 0;
+        var total_part2: usize = 0;
 
-        var i: usize = x;
-        var j: usize = y;
-        while (j >= 0 and i >= 0 and j < matrix.len and i < matrix.len) : ({
-            if (offset < 0) {
-                if (i == 0) break;
-                i -|= @intCast(@abs(offset));
-                j +|= @intCast(@abs(offset));
-            } else {
-                i +|= @intCast(offset);
-                j +|= @intCast(offset);
+        const directions = [8][2]isize{
+            [_]isize{ 0, 1 },
+            [_]isize{ 1, 0 },
+            [_]isize{ 1, 1 },
+            [_]isize{ 0, -1 },
+            [_]isize{ -1, 0 },
+            [_]isize{ 1, -1 },
+            [_]isize{ -1, 1 },
+            [_]isize{ -1, -1 },
+        };
+
+        for (self.matrix.items, 0..) |row, y| {
+            for (row, 0..) |col, x| {
+                if (col == 'X') {
+                    for (directions) |dir| {
+                        if (findInDirection(u8, self.matrix.items, token, y, x, dir[0], dir[1])) {
+                            total += 1;
+                        }
+                    }
+                }
+
+                if (col == 'A') {
+                    var x_mas_total: usize = 0;
+                    for (directions) |dir| {
+                        if (dir[0] == 0 or dir[1] == 0) continue;
+                        if ((y == 0 and dir[0] == -1) or (y == row.len - 1 and dir[0] == 1)) continue;
+                        if ((x == 0 and dir[1] == -1) or (x == row.len - 1 and dir[1] == 1)) continue;
+
+                        const opposite_y: isize = dir[0] * -1;
+                        const opposite_x: isize = dir[1] * -1;
+                        if (findInDirection(u8, self.matrix.items, token_part2, @intCast(@as(isize, @intCast(y)) + dir[0]), @intCast(@as(isize, @intCast(x)) + dir[1]), opposite_y, opposite_x)) {
+                            x_mas_total += 1;
+                        }
+                    }
+                    if (x_mas_total == 2) total_part2 += 1;
+                }
             }
-        }) {
-            // std.debug.print("x: {}, y: {}\n", .{ i, j });
-            try diagonal.append(matrix[j][i]);
         }
 
-        return diagonal.toOwnedSlice();
-    }
-
-    fn makeVertical(allocator: std.mem.Allocator, comptime T: type, matrix: [][]const T, i: usize) ![]const T {
-        if (i >= matrix.len) return errors.OutOfBounds;
-
-        var vertical = std.ArrayList(u8).init(allocator);
-        defer vertical.deinit();
-
-        var j: usize = 0;
-        while (j < matrix.len) : (j += 1) {
-            try vertical.append(matrix[j][i]);
-        }
-
-        return vertical.toOwnedSlice();
-    }
-
-    pub fn result(self: *Day4) !u16 {
-        var total: u16 = 0;
-
-        for (self.matrix.items, 0..) |line, i| {
-            total += findOccurences(0, line, token);
-            total += findOccurences(0, line, reversedToken);
-
-            const vert = try makeVertical(self.allocator, u8, self.matrix.items, i);
-            total += findOccurences(0, vert, token);
-            total += findOccurences(0, vert, reversedToken);
-            self.allocator.free(vert);
-
-            var diag = try makeDiagonal(self.allocator, u8, self.matrix.items, 0, i, 1);
-            total += findOccurences(0, diag, token);
-            total += findOccurences(0, diag, reversedToken);
-            self.allocator.free(diag);
-            diag = try makeDiagonal(self.allocator, u8, self.matrix.items, i, 0, 1);
-            total += findOccurences(0, diag, token);
-            total += findOccurences(0, diag, reversedToken);
-            self.allocator.free(diag);
-
-            diag = try makeDiagonal(self.allocator, u8, self.matrix.items, line.len - 1, i, -1);
-            total += findOccurences(0, diag, token);
-            total += findOccurences(0, diag, reversedToken);
-            self.allocator.free(diag);
-            diag = try makeDiagonal(self.allocator, u8, self.matrix.items, line.len - 1, 0, -1);
-            total += findOccurences(0, diag, token);
-            total += findOccurences(0, diag, reversedToken);
-            self.allocator.free(diag);
-        }
-
-        return total;
+        return .{ total, total_part2 };
     }
 };
 
-test "findOccurences" {
-    try std.testing.expectEqual(1, Day4.findOccurences(0, "MMMSXXMASM", "XMAS"));
-    try std.testing.expectEqual(0, Day4.findOccurences(0, "MMMSXXMASM", "SAMX"));
-    try std.testing.expectEqual(2, Day4.findOccurences(0, "XMASXXMASM", "XMAS"));
-    try std.testing.expectEqual(1, Day4.findOccurences(0, "MSAMXMSMSA", "SAMX"));
-}
-
-test "makeDiagonal" {
+test "findInDirection" {
     const allocator = std.testing.allocator;
 
     var matrix = std.ArrayList([]const u8).init(allocator);
@@ -131,42 +107,14 @@ test "makeDiagonal" {
     try matrix.append("MAMMMXMMMM");
     try matrix.append("MXMXAXMASX");
 
-    const slice = try Day4.makeDiagonal(allocator, u8, matrix.items, 0, 0, 1);
-    defer allocator.free(slice);
-    try std.testing.expect(std.mem.eql(u8, "MSXMAXSAMX", slice));
-    const slice2 = try Day4.makeDiagonal(allocator, u8, matrix.items, 1, 1, 1);
-    defer allocator.free(slice2);
-    try std.testing.expect(std.mem.eql(u8, "SXMAXSAMX", slice2));
-    const slice3 = try Day4.makeDiagonal(allocator, u8, matrix.items, 0, 1, 1);
-    defer allocator.free(slice3);
-    try std.testing.expect(std.mem.eql(u8, "MMASMASMS", slice3));
-    const slice4 = try Day4.makeDiagonal(allocator, u8, matrix.items, 9, 0, -1);
-    defer allocator.free(slice4);
-    try std.testing.expect(std.mem.eql(u8, "MSAMMMMXAM", slice4));
-}
-
-test "makeVertical" {
-    const allocator = std.testing.allocator;
-
-    var matrix = std.ArrayList([]const u8).init(allocator);
-    defer matrix.deinit();
-    try matrix.append("MMMSXXMASM");
-    try matrix.append("MSAMXMSMSA");
-    try matrix.append("AMXSXMAAMM");
-    try matrix.append("MSAMASMSMX");
-    try matrix.append("XMASAMXAMM");
-    try matrix.append("XXAMMXXAMA");
-    try matrix.append("SMSMSASXSS");
-    try matrix.append("SAXAMASAAA");
-    try matrix.append("MAMMMXMMMM");
-    try matrix.append("MXMXAXMASX");
-
-    const slice = try Day4.makeVertical(allocator, u8, matrix.items, 0);
-    defer allocator.free(slice);
-    try std.testing.expect(std.mem.eql(u8, "MMAMXXSSMM", slice));
-    const slice2 = try Day4.makeVertical(allocator, u8, matrix.items, 5);
-    defer allocator.free(slice2);
-    try std.testing.expect(std.mem.eql(u8, "XMMSMXAAXX", slice2));
+    try std.testing.expect(Day4.findInDirection(u8, matrix.items, Day4.token, 0, 5, 0, 1));
+    try std.testing.expect(Day4.findInDirection(u8, matrix.items, Day4.token, 3, 9, 1, 0));
+    try std.testing.expect(Day4.findInDirection(u8, matrix.items, Day4.token, 0, 4, 1, 1));
+    try std.testing.expect(Day4.findInDirection(u8, matrix.items, Day4.token, 9, 9, -1, 0));
+    try std.testing.expect(Day4.findInDirection(u8, matrix.items, Day4.token, 1, 4, 0, -1));
+    try std.testing.expect(Day4.findInDirection(u8, matrix.items, Day4.token, 5, 0, -1, 1));
+    try std.testing.expect(Day4.findInDirection(u8, matrix.items, Day4.token, 3, 9, 1, -1));
+    try std.testing.expect(Day4.findInDirection(u8, matrix.items, Day4.token, 9, 9, -1, -1));
 }
 
 test "result" {
@@ -186,5 +134,5 @@ test "result" {
     try day4.parseLine("MAMMMXMMMM");
     try day4.parseLine("MXMXAXMASX");
 
-    try std.testing.expectEqual(18, try day4.result());
+    try std.testing.expectEqual(.{ 18, 9 }, try day4.result());
 }

@@ -1,6 +1,17 @@
 const std = @import("std");
 const Day4 = @import("day4.zig").Day4;
 
+fn readFile(allocator: std.mem.Allocator, filename: []const u8) ![]u8 {
+    const file = try std.fs.cwd().openFile(
+        filename,
+        std.fs.File.OpenFlags{},
+    );
+    defer file.close();
+
+    const stat = try file.stat();
+    return try file.readToEndAlloc(allocator, stat.size);
+}
+
 pub fn main() !void {
     var args = std.process.args();
 
@@ -14,26 +25,16 @@ pub fn main() !void {
         break;
     }
 
-    const cwd = std.fs.cwd();
-
-    const input_file = try cwd.openFile(input_path, .{});
-    defer input_file.close();
-
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
+
+    const file_buf = try readFile(arena.allocator(), input_path);
+    var lines = std.mem.splitAny(u8, file_buf, "\n");
 
     var day4 = Day4.init(arena.allocator());
     defer day4.deinit();
 
-    var buffer: [10000]u8 = undefined;
-
-    i = 0;
-    while (true) : (i += 1) {
-        const line = input_file.reader().readUntilDelimiter(&buffer, '\n') catch |err| switch (err) {
-            error.EndOfStream => break,
-            else => return err,
-        };
-
+    while (lines.next()) |line| {
         try day4.parseLine(line);
     }
 

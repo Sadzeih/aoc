@@ -4,7 +4,8 @@ pub fn findToken(comptime T: type, haystack: []const T, token: []const T) ?usize
     var i: usize = 0;
 
     while (i < haystack.len and i + token.len <= haystack.len) : (i += 1) {
-        if (std.mem.eql(u8, haystack[i .. i + token.len], token)) return i + token.len;
+        // std.debug.print("{s}\n", .{haystack[i .. i + token.len]});
+        if (std.mem.eql(u8, haystack[i .. i + token.len], token)) return i;
     }
     return null;
 }
